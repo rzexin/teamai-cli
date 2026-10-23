@@ -387,7 +387,10 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
     const parsed = JSON.parse(output.trim().split('\n').find((l) => l.includes('hookSpecificOutput'))!);
     const ctx = parsed.hookSpecificOutput.additionalContext;
     expect(ctx).toContain('[ClawPro项目 绑定提示]');
-    expect(ctx).toContain('当前工作区未绑定ClawPro项目');
+    expect(ctx).toContain('当前工作区还没绑定 ClawPro 项目');
+    expect(ctx).toContain('交互式单选');
+    expect(ctx).not.toContain('必须');
+    expect(ctx).not.toContain('不得');
     expect(ctx).toContain('绑定到「alpha」项目');
     expect(ctx).toContain('绑定到「beta」项目');
     expect(ctx).toContain('不绑定，以后也不再提示');
@@ -798,6 +801,9 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
         expect(first).toContain('2. 手动关联：之后自己关联项目，不再主动提醒');
         expect(first).toContain('teamai bind-project --project-association-mode auto');
         expect(first).toContain('若输出包含「[ClawPro项目 绑定提示]」');
+        expect(first).toContain('交互式单选');
+        expect(first).not.toContain('必须');
+        expect(first).not.toContain('不得');
         expect(first).toContain('teamai bind-project --project-association-mode manual');
         expect(first).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
         expect(first).toContain('clawpro 项目设置: 查看或修改项目关联提醒方式');

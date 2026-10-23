@@ -1452,14 +1452,18 @@ function bindingHintText(projects: LocalAgentProject[]): string {
   const choices = projects.map((p, i) => `${i + 1}. 绑定到「${p.name}」项目`);
   const actions = projects.map((p, i) => `- 用户回复 ${i + 1} → 执行 \`teamai bind-project --project-id ${p.id}\`，完成后回复"绑定完成，请开新会话生效"`);
   return [
-    `${BINDING_HINT_HEADER} 你必须原样展示下面的选项列表，不得修改编号或内容。等用户回复数字后执行对应命令。`,
+    BINDING_HINT_HEADER,
+    '下面是给助手的说明，不要展示给用户。',
+    '请用交互式单选向用户提问，和「项目关联方式」用同一种选择卡片。',
+    '标题用「项目绑定」。卡片里只放「展示给用户」的说明和选项，选项文字保持不变。',
+    '不要把本段说明、方括号标记或执行规则展示出来。用户选定后，按执行规则运行对应命令。',
     '',
-    '---',
-    '当前工作区未绑定ClawPro项目。绑定后可同步团队 skills/rules。请回复数字选择：',
-    '',
+    '展示给用户：',
+    '标题：项目绑定',
+    '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。',
+    '选项：',
     ...choices,
     `${skipNum}. 不绑定，以后也不再提示`,
-    '---',
     '',
     '执行规则（不要展示给用户）：',
     ...actions,
@@ -1486,18 +1490,21 @@ async function emitPromptModeChooser(
   try { fs.writeFileSync(hintMarker, ''); } catch {}
 
   const context = [
-    '[ClawPro项目 关联方式] 你必须原样展示下面的选项列表，不得修改编号或内容。等用户回复数字后执行对应命令。',
+    '[ClawPro项目 关联方式]',
+    '下面是给助手的说明，不要展示给用户。',
+    '请用交互式单选向用户提问。标题用「项目关联方式」。卡片里只放下面的说明和选项，选项文字保持不变。',
+    '不要把本段说明或执行规则展示出来。用户选定后，按执行规则运行对应命令。',
     '',
-    '---',
-    '当前设备尚未选择 ClawPro 项目关联方式。请回复数字选择：',
-    '',
+    '展示给用户：',
+    '标题：项目关联方式',
+    '说明：当前设备尚未选择 ClawPro 项目关联方式。',
+    '选项：',
     '1. 主动提醒：每个未绑定工作区都提醒绑定项目（有可绑定项目时）',
     '2. 手动关联：之后自己关联项目，不再主动提醒',
-    '---',
     '',
     '执行规则（不要展示给用户）：',
-    `- 用户回复 1 → 执行 \`teamai bind-project --project-association-mode auto\`。若输出包含「${BINDING_HINT_HEADER}」，原样展示其中的选项列表，并按其中的执行规则继续，不要改写。若没有该提示，回复"已开启主动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"`,
-    '- 用户回复 2 → 执行 `teamai bind-project --project-association-mode manual`，完成后原样展示下面这段：',
+    `- 用户回复 1 → 执行 \`teamai bind-project --project-association-mode auto\`。若输出包含「${BINDING_HINT_HEADER}」，用同样的交互式单选向用户提问，标题用「项目绑定」，只展示其中「展示给用户」的说明和选项，再按其中的执行规则继续。若没有该提示，回复"已开启主动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"`,
+    '- 用户回复 2 → 执行 `teamai bind-project --project-association-mode manual`，完成后把下面这段展示给用户：',
     MANUAL_ASSOCIATION_COMMANDS,
   ].join('\n');
   const hookOutput = JSON.stringify({
