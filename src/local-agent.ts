@@ -186,6 +186,11 @@ export interface LocalAgentConfig {
   createdAt: string;
   userGroupId?: number;
   userGroupName?: string;
+  /**
+   * Device-wide choice for ClawPro workspace binding reminders.
+   * Missing on older configs means `auto`. `unset` asks once after a fresh install.
+   */
+  projectPromptMode?: 'unset' | 'auto' | 'manual';
   workspaceBindings: Record<string, WorkspaceBinding>;
   /**
    * Optional per-endpoint path overrides. Maps a logical route name to a custom
@@ -1463,6 +1468,65 @@ function isBindPromptEnabled(): boolean {
   if (flag === undefined) return true;
   const normalized = flag.toLowerCase();
   return normalized !== '0' && normalized !== 'false';
+}
+
+/** Older configs omit the field and keep today's automatic reminder. */
+function resolveProjectPromptMode(config: LocalAgentConfig): 'unset' | 'auto' | 'manual' {
+  if (config.projectPromptMode === 'unset' || config.projectPromptMode === 'manual') {
+    return config.projectPromptMode;
+  }
+  return 'auto';
+}
+
+/** Printed after a manual choice, and by `bind-project --settings`. The hook instruction quotes the same text. */
+const MANUAL_ASSOCIATION_COMMANDS = [
+  '手动关联命令:',
+  '- clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目',
+  '  teamai bind-project',
+  '- clawpro 项目设置: 查看或修改项目关联提醒方式',
+  '  teamai bind-project --settings',
+].join('\n');
+
+/**
+ * One-time device choice, shown until the user picks auto or manual.
+ * Skips a workspace that is already bound, skipped, or inherited from its main checkout.
+ */
+async function emitPromptModeChooser(
+  config: LocalAgentConfig,
+  workspacePath: string,
+  sessionId?: string,
+  cwd?: string,
+): Promise<void> {
+  if (config.workspaceBindings[workspacePath]) return;
+  if (await inheritWorktreeBinding(config, cwd, workspacePath)) return;
+
+  const markerKey = sessionId || `ppid-${process.ppid}`;
+  const hintMarker = path.join(os.tmpdir(), `teamai-prompt-mode-${markerKey}`);
+  if (fs.existsSync(hintMarker)) return;
+  try { fs.writeFileSync(hintMarker, ''); } catch {}
+
+  const context = [
+    '[ClawPro项目 关联方式] 你必须原样展示下面的选项列表，不得修改编号或内容。等用户回复数字后执行对应命令。',
+    '',
+    '---',
+    '当前设备尚未选择 ClawPro 项目关联方式。请回复数字选择：',
+    '',
+    '1. 自动提醒：进入新的未绑定工作区时询问是否关联',
+    '2. 手动关联：关闭自动提醒',
+    '---',
+    '',
+    '执行规则（不要展示给用户）：',
+    '- 用户回复 1 → 执行 `teamai bind-project --prompt-mode auto`，完成后回复"已开启自动提醒。进入新的未绑定工作区时会询问是否关联。"',
+    '- 用户回复 2 → 执行 `teamai bind-project --prompt-mode manual`，完成后原样展示下面这段：',
+    MANUAL_ASSOCIATION_COMMANDS,
+  ].join('\n');
+  const hookOutput = JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: context,
+    },
+  });
+  process.stdout.write(hookOutput + '\n');
 }
 
 /**
@@ -4408,11 +4472,16 @@ async function syncLocalAgent(context: LocalAgentContext): Promise<boolean> {
     const workspacePath = await resolveWorkspacePath(context.cwd);
     if (workspacePath) {
       const sid = context.event?.sessionId;
-      if (context.event?.type === 'session_start') {
-        await ensureWorkspaceBinding(config, workspacePath, sid, context.cwd);
-      }
-      if (context.event?.type === 'prompt_submit') {
-        await emitBindingHint(config, workspacePath, sid, context.cwd);
+      const mode = resolveProjectPromptMode(config);
+      if (mode === 'unset' && context.event?.type === 'prompt_submit') {
+        await emitPromptModeChooser(config, workspacePath, sid, context.cwd);
+      } else if (mode === 'auto') {
+        if (context.event?.type === 'session_start') {
+          await ensureWorkspaceBinding(config, workspacePath, sid, context.cwd);
+        }
+        if (context.event?.type === 'prompt_submit') {
+          await emitBindingHint(config, workspacePath, sid, context.cwd);
+        }
       }
     }
   }
@@ -4726,6 +4795,12 @@ export async function initLocalAgentHttp(options: {
     workspaceBindings: existing?.workspaceBindings ?? {},
     userGroupId: existing?.userGroupId,
     userGroupName: existing?.userGroupName,
+    // A re-init keeps a choice the user already made. A first install asks once.
+    ...(existing?.projectPromptMode
+      ? { projectPromptMode: existing.projectPromptMode }
+      : existing
+        ? {}
+        : { projectPromptMode: 'unset' as const }),
   };
 
   await ensureDir(getLocalAgentHome());
@@ -5063,7 +5138,39 @@ async function finishAgentHookTeardown(
   return 'removed';
 }
 
-export async function bindCurrentProject(options?: { projectId?: number; skip?: boolean; cwd?: string }): Promise<void> {
+export async function bindCurrentProject(options?: {
+  projectId?: number;
+  skip?: boolean;
+  cwd?: string;
+  promptMode?: string;
+  settings?: boolean;
+}): Promise<void> {
+  const wantsReminder = options?.promptMode !== undefined || !!options?.settings;
+  if (wantsReminder) {
+    const config = await loadLocalAgentConfig();
+    if (!config) {
+      throw new Error('Local agent not initialized. Run `teamai init --http` first.');
+    }
+    if (options?.promptMode !== undefined) {
+      if (options.promptMode !== 'auto' && options.promptMode !== 'manual') {
+        throw new Error('Invalid --prompt-mode. Expected auto or manual.');
+      }
+      config.projectPromptMode = options.promptMode;
+      await saveLocalAgentConfig(config);
+    }
+    if (options?.settings) {
+      log.info(`Project association reminder: ${resolveProjectPromptMode(config)}.`);
+    }
+    if (options?.settings || options?.promptMode === 'manual') {
+      process.stdout.write(MANUAL_ASSOCIATION_COMMANDS + '\n');
+    } else if (options?.promptMode === 'auto') {
+      log.info('Project association reminders are on. A new unbound workspace will ask whether to bind.');
+    }
+  }
+
+  const bindRequested = !!options?.skip || options?.projectId !== undefined || !wantsReminder;
+  if (!bindRequested) return;
+
   const workspacePath = await resolveWorkspacePath(options?.cwd ?? process.cwd());
   if (!workspacePath) {
     throw new Error('Cannot resolve current workspace path.');

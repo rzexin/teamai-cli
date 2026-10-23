@@ -1208,11 +1208,15 @@ program
   .description('Bind the current workspace to a ClawPro project for HTTP local-agent sync')
   .option('--project-id <id>', 'Project ID from /projects/mine')
   .option('--skip', 'Mark current workspace as skipped (never prompt again)')
+  .option('--prompt-mode <mode>', 'Project association reminder: auto (ask in each new workspace) or manual (no automatic reminder)')
+  .option('--settings', 'Show the project association reminder mode and how to change it')
   .action(async (cmdOpts) => {
     const { bindCurrentProject } = await import('./local-agent.js');
     await bindCurrentProject({
       projectId: cmdOpts.projectId ? Number.parseInt(cmdOpts.projectId, 10) : undefined,
       skip: !!cmdOpts.skip,
+      promptMode: cmdOpts.promptMode,
+      settings: !!cmdOpts.settings,
     });
   });
 

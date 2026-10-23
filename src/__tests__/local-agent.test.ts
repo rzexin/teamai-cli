@@ -52,6 +52,7 @@ beforeEach(async () => {
   // Clean hint markers (both old ppid-based and new sessionId-based)
   await fse.remove(path.join(os.tmpdir(), `teamai-bind-hint-${TEST_SESSION_ID}`));
   await fse.remove(path.join(os.tmpdir(), `teamai-bind-session-${TEST_SESSION_ID}`));
+  await fse.remove(path.join(os.tmpdir(), `teamai-prompt-mode-${TEST_SESSION_ID}`));
 });
 
 afterEach(async () => {
@@ -61,11 +62,15 @@ afterEach(async () => {
   delete process.env.TEAMAI_BIND_PROMPT_ENABLED;
   await fse.remove(path.join(os.tmpdir(), `teamai-bind-hint-${TEST_SESSION_ID}`));
   await fse.remove(path.join(os.tmpdir(), `teamai-bind-session-${TEST_SESSION_ID}`));
+  await fse.remove(path.join(os.tmpdir(), `teamai-prompt-mode-${TEST_SESSION_ID}`));
   await fse.remove(tmpDir);
   vi.restoreAllMocks();
 });
 
-async function setupConfig(bindings: Record<string, unknown> = {}) {
+async function setupConfig(
+  bindings: Record<string, unknown> = {},
+  extra: { projectPromptMode?: 'unset' | 'auto' | 'manual' } = {},
+) {
   const configDir = path.join(tmpDir, '.teamai', 'local-agent');
   await fse.ensureDir(configDir);
   await fse.writeJson(path.join(configDir, 'config.json'), {
@@ -74,6 +79,7 @@ async function setupConfig(bindings: Record<string, unknown> = {}) {
     localAgentId: 'test-agent-id',
     createdAt: '2026-01-01T00:00:00.000Z',
     workspaceBindings: bindings,
+    ...(extra.projectPromptMode ? { projectPromptMode: extra.projectPromptMode } : {}),
   });
 }
 
@@ -687,6 +693,206 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
     const ctx = parsed.hookSpecificOutput.additionalContext as string;
     expect(ctx).toContain('当前工作区尚未绑定项目');
     expect(ctx).toContain('teamai bind-project');
+  });
+
+  it.each(['codebuddy', 'workbuddy'] as const)(
+    'asks for a reminder mode once per session when unset (%s)',
+    async (tool) => {
+      process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
+      const sessionId = `${TEST_SESSION_ID}-${tool}`;
+      await fse.remove(path.join(os.tmpdir(), `teamai-prompt-mode-${sessionId}`));
+      await setupConfig({}, { projectPromptMode: 'unset' });
+      const projectDir = path.join(tmpDir, `unset-${tool}`);
+      await fse.ensureDir(projectDir);
+      execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, projects: [{ id: 1, name: 'alpha' }] })));
+      vi.stubGlobal('fetch', fetchMock);
+      const chunks: string[] = [];
+      const origWrite = process.stdout.write;
+      process.stdout.write = ((chunk: string | Buffer) => {
+        chunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        const { reportAndSyncLocalAgent } = await import('../local-agent.js');
+        const event = {
+          type: 'prompt_submit' as const,
+          timestamp: new Date().toISOString(),
+          sessionId,
+          tool,
+        };
+        await reportAndSyncLocalAgent({ cwd: projectDir, tool, event });
+        const first = chunks.join('');
+        expect(first).toContain('[ClawPro项目 关联方式]');
+        expect(first).toContain('1. 自动提醒：进入新的未绑定工作区时询问是否关联');
+        expect(first).toContain('2. 手动关联：关闭自动提醒');
+        expect(first).toContain('teamai bind-project --prompt-mode auto');
+        expect(first).toContain('teamai bind-project --prompt-mode manual');
+        expect(first).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
+        expect(first).toContain('clawpro 项目设置: 查看或修改项目关联提醒方式');
+        expect(first).not.toContain('绑定到「alpha」项目');
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(false);
+
+        chunks.length = 0;
+        await reportAndSyncLocalAgent({ cwd: projectDir, tool, event });
+        expect(chunks.join('')).not.toContain('ClawPro项目 关联方式');
+      } finally {
+        process.stdout.write = origWrite;
+      }
+    },
+  );
+
+  it.each(['claude', 'cursor'] as const)(
+    'does NOT ask for a reminder mode on non-buddy agent %s',
+    async (tool) => {
+      process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
+      await setupConfig({}, { projectPromptMode: 'unset' });
+      const projectDir = path.join(tmpDir, `unset-non-buddy-${tool}`);
+      await fse.ensureDir(projectDir);
+      execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, projects: [{ id: 1, name: 'alpha' }] })));
+      vi.stubGlobal('fetch', fetchMock);
+      const chunks: string[] = [];
+      const origWrite = process.stdout.write;
+      process.stdout.write = ((chunk: string | Buffer) => {
+        chunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        const { reportAndSyncLocalAgent } = await import('../local-agent.js');
+        await reportAndSyncLocalAgent({
+          cwd: projectDir,
+          tool,
+          event: { type: 'prompt_submit', timestamp: new Date().toISOString(), sessionId: `sid-${tool}`, tool },
+        });
+      } finally {
+        process.stdout.write = origWrite;
+      }
+      expect(chunks.join('')).not.toContain('ClawPro项目 关联方式');
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(false);
+    },
+  );
+
+  it('does NOT emit a binding hint when the reminder mode is manual', async () => {
+    process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
+    await setupConfig({}, { projectPromptMode: 'manual' });
+    const projectDir = path.join(tmpDir, 'manual-mode');
+    await fse.ensureDir(projectDir);
+    execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, projects: [{ id: 1, name: 'alpha' }] })));
+    vi.stubGlobal('fetch', fetchMock);
+    const chunks: string[] = [];
+    const origWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Buffer) => {
+      chunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const { reportAndSyncLocalAgent } = await import('../local-agent.js');
+      await reportAndSyncLocalAgent({
+        cwd: projectDir,
+        tool: 'codebuddy',
+        event: { type: 'prompt_submit', timestamp: new Date().toISOString(), sessionId: TEST_SESSION_ID, tool: 'codebuddy' },
+      });
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(chunks.join('')).not.toContain('hookSpecificOutput');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(false);
+  });
+
+  it('does NOT ask for a reminder mode when TEAMAI_BIND_PROMPT_ENABLED is off', async () => {
+    process.env.TEAMAI_BIND_PROMPT_ENABLED = '0';
+    await setupConfig({}, { projectPromptMode: 'unset' });
+    const projectDir = path.join(tmpDir, 'unset-disabled');
+    await fse.ensureDir(projectDir);
+    execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+    const chunks: string[] = [];
+    const origWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Buffer) => {
+      chunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const { reportAndSyncLocalAgent } = await import('../local-agent.js');
+      await reportAndSyncLocalAgent({
+        cwd: projectDir,
+        tool: 'codebuddy',
+        event: { type: 'prompt_submit', timestamp: new Date().toISOString(), sessionId: TEST_SESSION_ID, tool: 'codebuddy' },
+      });
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    expect(chunks.join('')).not.toContain('ClawPro项目 关联方式');
+  });
+});
+
+describe('local-agent: project prompt mode', () => {
+  async function capture(run: () => Promise<void>): Promise<string> {
+    const chunks: string[] = [];
+    const origWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Buffer) => {
+      chunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await run();
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    return chunks.join('');
+  }
+
+  it('prints the manual association commands and can show settings outside a git workspace', async () => {
+    await setupConfig();
+    const { bindCurrentProject } = await import('../local-agent.js');
+    const { log } = await import('../utils/logger.js');
+
+    const manual = await capture(() => bindCurrentProject({ promptMode: 'manual', cwd: tmpDir }));
+    expect(manual).toContain('手动关联命令:');
+    expect(manual).toContain('- clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
+    expect(manual).toContain('  teamai bind-project');
+    expect(manual).toContain('- clawpro 项目设置: 查看或修改项目关联提醒方式');
+    expect(manual).toContain('  teamai bind-project --settings');
+    const saved = await fse.readJson(path.join(tmpDir, '.teamai', 'local-agent', 'config.json'));
+    expect(saved.projectPromptMode).toBe('manual');
+
+    const shown = await capture(() => bindCurrentProject({ settings: true, cwd: tmpDir }));
+    expect(log.info).toHaveBeenCalledWith('Project association reminder: manual.');
+    expect(shown).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
+    expect(shown).toContain('teamai bind-project --settings');
+
+    await bindCurrentProject({ promptMode: 'auto', settings: true, cwd: tmpDir });
+    expect(log.info).toHaveBeenCalledWith('Project association reminder: auto.');
+    const updated = await fse.readJson(path.join(tmpDir, '.teamai', 'local-agent', 'config.json'));
+    expect(updated.projectPromptMode).toBe('auto');
+  });
+
+  it('rejects an unknown prompt mode', async () => {
+    await setupConfig();
+    const { bindCurrentProject } = await import('../local-agent.js');
+    await expect(bindCurrentProject({ promptMode: 'sometimes', cwd: tmpDir })).rejects.toThrow('Invalid --prompt-mode');
+  });
+
+  it('records unset on a first install and keeps the choice across a forced re-init', async () => {
+    const { initLocalAgentHttp, loadLocalAgentConfig } = await import('../local-agent.js');
+    await initLocalAgentHttp({ endpoint: 'https://new.example.com/api', filterAgents: [] });
+    expect((await loadLocalAgentConfig())?.projectPromptMode).toBe('unset');
+
+    const configPath = path.join(tmpDir, '.teamai', 'local-agent', 'config.json');
+    const current = await fse.readJson(configPath);
+    current.projectPromptMode = 'manual';
+    current.workspaceBindings = {
+      '/tmp/kept': { projectId: 7, projectName: 'kept', boundAt: '2026-01-01T00:00:00.000Z' },
+    };
+    await fse.writeJson(configPath, current);
+
+    await initLocalAgentHttp({ endpoint: 'https://other.example.com/api', force: true, filterAgents: [] });
+    const next = await loadLocalAgentConfig();
+    expect(next?.endpoint).toBe('https://other.example.com/api');
+    expect(next?.projectPromptMode).toBe('manual');
+    expect(next?.workspaceBindings['/tmp/kept']?.projectId).toBe(7);
   });
 });
 
