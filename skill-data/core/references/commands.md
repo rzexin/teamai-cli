@@ -364,7 +364,7 @@ Generated: do not edit by hand. Regenerate with
 - `teamai bind-project` — Bind the current workspace to a ClawPro project for HTTP local-agent sync
   - `--project-id <id>` — Project ID from /projects/mine
   - `--skip` — Mark current workspace as skipped (never prompt again)
-  - `--prompt-mode <mode>` — Project association reminder: auto (ask in each new workspace) or manual (no automatic reminder)
+  - `--prompt-mode <mode>` — Project association reminder: auto (remind each unbound workspace to bind when projects exist) or manual (no automatic reminder)
   - `--settings` — Show the project association reminder mode and how to change it
 
 ## contribute
