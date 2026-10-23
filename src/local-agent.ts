@@ -191,7 +191,7 @@ export interface LocalAgentConfig {
    * Only `auto` or `manual` is a choice. A missing field means the device has
    * not chosen yet (`unset`): ask once. `auto` then reminds every unbound workspace.
    */
-  projectPromptMode?: 'unset' | 'auto' | 'manual';
+  projectAssociationMode?: 'unset' | 'auto' | 'manual';
   workspaceBindings: Record<string, WorkspaceBinding>;
   /**
    * Optional per-endpoint path overrides. Maps a logical route name to a custom
@@ -1427,9 +1427,9 @@ function isBindPromptEnabled(): boolean {
  * Only an explicit choice sticks. A missing field — including a config written
  * before this setting existed — means the device has not chosen yet.
  */
-function resolveProjectPromptMode(config: LocalAgentConfig): 'unset' | 'auto' | 'manual' {
-  if (config.projectPromptMode === 'auto' || config.projectPromptMode === 'manual') {
-    return config.projectPromptMode;
+function resolveProjectAssociationMode(config: LocalAgentConfig): 'unset' | 'auto' | 'manual' {
+  if (config.projectAssociationMode === 'auto' || config.projectAssociationMode === 'manual') {
+    return config.projectAssociationMode;
   }
   return 'unset';
 }
@@ -1442,6 +1442,30 @@ const MANUAL_ASSOCIATION_COMMANDS = [
   '- clawpro 项目设置: 查看或修改项目关联提醒方式',
   '  teamai bind-project --settings',
 ].join('\n');
+
+/** Marker the agent looks for in `bind-project --project-association-mode auto` output. The hook instruction quotes it. */
+const BINDING_HINT_HEADER = '[ClawPro项目 绑定提示]';
+
+/** Agent-facing project choices. Shared by the hook reminder and `--project-association-mode auto`. */
+function bindingHintText(projects: LocalAgentProject[]): string {
+  const skipNum = projects.length + 1;
+  const choices = projects.map((p, i) => `${i + 1}. 绑定到「${p.name}」项目`);
+  const actions = projects.map((p, i) => `- 用户回复 ${i + 1} → 执行 \`teamai bind-project --project-id ${p.id}\`，完成后回复"绑定完成，请开新会话生效"`);
+  return [
+    `${BINDING_HINT_HEADER} 你必须原样展示下面的选项列表，不得修改编号或内容。等用户回复数字后执行对应命令。`,
+    '',
+    '---',
+    '当前工作区未绑定ClawPro项目。绑定后可同步团队 skills/rules。请回复数字选择：',
+    '',
+    ...choices,
+    `${skipNum}. 不绑定，以后也不再提示`,
+    '---',
+    '',
+    '执行规则（不要展示给用户）：',
+    ...actions,
+    `- 用户回复 ${skipNum} → 执行 \`teamai bind-project --skip\`，完成后回复"已跳过，以后不再提示"`,
+  ].join('\n');
+}
 
 /**
  * One-time device choice, shown until the user picks auto or manual.
@@ -1467,13 +1491,13 @@ async function emitPromptModeChooser(
     '---',
     '当前设备尚未选择 ClawPro 项目关联方式。请回复数字选择：',
     '',
-    '1. 自动提醒：每个未绑定工作区都提醒绑定项目（有可绑定项目时）',
-    '2. 手动关联：之后自己关联项目，不再自动提醒',
+    '1. 主动提醒：每个未绑定工作区都提醒绑定项目（有可绑定项目时）',
+    '2. 手动关联：之后自己关联项目，不再主动提醒',
     '---',
     '',
     '执行规则（不要展示给用户）：',
-    '- 用户回复 1 → 执行 `teamai bind-project --prompt-mode auto`，完成后回复"已开启自动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"',
-    '- 用户回复 2 → 执行 `teamai bind-project --prompt-mode manual`，完成后原样展示下面这段：',
+    `- 用户回复 1 → 执行 \`teamai bind-project --project-association-mode auto\`。若输出包含「${BINDING_HINT_HEADER}」，原样展示其中的选项列表，并按其中的执行规则继续，不要改写。若没有该提示，回复"已开启主动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"`,
+    '- 用户回复 2 → 执行 `teamai bind-project --project-association-mode manual`，完成后原样展示下面这段：',
     MANUAL_ASSOCIATION_COMMANDS,
   ].join('\n');
   const hookOutput = JSON.stringify({
@@ -1551,23 +1575,7 @@ async function emitBindingHint(
   reminded.add(workspacePath);
   try { fs.writeFileSync(statePath, JSON.stringify({ empty: false, workspaces: [...reminded] })); } catch {}
 
-  const skipNum = projects.length + 1;
-  const choices = projects.map((p, i) => `${i + 1}. 绑定到「${p.name}」项目`);
-  const actions = projects.map((p, i) => `- 用户回复 ${i + 1} → 执行 \`teamai bind-project --project-id ${p.id}\`，完成后回复"绑定完成，请开新会话生效"`);
-  const context = [
-    '[ClawPro项目 绑定提示] 你必须原样展示下面的选项列表，不得修改编号或内容。等用户回复数字后执行对应命令。',
-    '',
-    '---',
-    '当前工作区未绑定ClawPro项目。绑定后可同步团队 skills/rules。请回复数字选择：',
-    '',
-    ...choices,
-    `${skipNum}. 不绑定，以后也不再提示`,
-    '---',
-    '',
-    '执行规则（不要展示给用户）：',
-    ...actions,
-    `- 用户回复 ${skipNum} → 执行 \`teamai bind-project --skip\`，完成后回复"已跳过，以后不再提示"`,
-  ].join('\n');
+  const context = bindingHintText(projects);
   const hookOutput = JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
@@ -4457,7 +4465,7 @@ async function syncLocalAgent(context: LocalAgentContext): Promise<boolean> {
     const workspacePath = await resolveWorkspacePath(context.cwd);
     if (workspacePath) {
       const sid = context.event?.sessionId;
-      const mode = resolveProjectPromptMode(config);
+      const mode = resolveProjectAssociationMode(config);
       // unset asks once how reminders should work. auto then reminds every
       // unbound workspace to bind when projects exist. manual never reminds;
       // the user binds later with `teamai bind-project`.
@@ -4780,8 +4788,8 @@ export async function initLocalAgentHttp(options: {
     userGroupName: existing?.userGroupName,
     // A re-init keeps auto/manual. A first install, and an older config that
     // never recorded a choice, both ask once.
-    projectPromptMode: existing?.projectPromptMode === 'auto' || existing?.projectPromptMode === 'manual'
-      ? existing.projectPromptMode
+    projectAssociationMode: existing?.projectAssociationMode === 'auto' || existing?.projectAssociationMode === 'manual'
+      ? existing.projectAssociationMode
       : 'unset',
   };
 
@@ -5120,33 +5128,57 @@ async function finishAgentHookTeardown(
   return 'removed';
 }
 
+/**
+ * After the device turns reminders on, offer a choice for the current unbound
+ * workspace in this same turn. Later sessions are reminded by the hook.
+ */
+async function offerBindingForCurrentWorkspace(config: LocalAgentConfig, cwd?: string): Promise<void> {
+  const dir = cwd ?? process.cwd();
+  const workspacePath = await resolveWorkspacePath(dir);
+  if (!workspacePath) return;
+  if (config.workspaceBindings[workspacePath]) return;
+  if (await inheritWorktreeBinding(config, dir, workspacePath)) return;
+
+  let projects: LocalAgentProject[];
+  try {
+    projects = await fetchUserProjects(config);
+  } catch {
+    return;
+  }
+  if (projects.length === 0) return;
+  process.stdout.write(bindingHintText(projects) + '\n');
+}
+
 export async function bindCurrentProject(options?: {
   projectId?: number;
   skip?: boolean;
   cwd?: string;
-  promptMode?: string;
+  projectAssociationMode?: string;
   settings?: boolean;
 }): Promise<void> {
-  const wantsReminder = options?.promptMode !== undefined || !!options?.settings;
+  const wantsReminder = options?.projectAssociationMode !== undefined || !!options?.settings;
   if (wantsReminder) {
     const config = await loadLocalAgentConfig();
     if (!config) {
       throw new Error('Local agent not initialized. Run `teamai init --http` first.');
     }
-    if (options?.promptMode !== undefined) {
-      if (options.promptMode !== 'auto' && options.promptMode !== 'manual') {
-        throw new Error('Invalid --prompt-mode. Expected auto or manual.');
+    if (options?.projectAssociationMode !== undefined) {
+      if (options.projectAssociationMode !== 'auto' && options.projectAssociationMode !== 'manual') {
+        throw new Error('Invalid --project-association-mode. Expected auto or manual.');
       }
-      config.projectPromptMode = options.promptMode;
+      config.projectAssociationMode = options.projectAssociationMode;
       await saveLocalAgentConfig(config);
     }
     if (options?.settings) {
-      log.info(`Project association reminder: ${resolveProjectPromptMode(config)}.`);
+      log.info(`Project association reminder: ${resolveProjectAssociationMode(config)}.`);
     }
-    if (options?.settings || options?.promptMode === 'manual') {
+    if (options?.settings || options?.projectAssociationMode === 'manual') {
       process.stdout.write(MANUAL_ASSOCIATION_COMMANDS + '\n');
-    } else if (options?.promptMode === 'auto') {
+    } else if (options?.projectAssociationMode === 'auto') {
       log.info('Project association reminders are on. Each unbound workspace is reminded to bind when projects are available.');
+      if (!options.skip && options.projectId === undefined) {
+        await offerBindingForCurrentWorkspace(config, options.cwd);
+      }
     }
   }
 

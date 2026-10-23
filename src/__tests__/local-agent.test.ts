@@ -69,7 +69,7 @@ afterEach(async () => {
 
 async function setupConfig(
   bindings: Record<string, unknown> = {},
-  extra: { projectPromptMode?: 'unset' | 'auto' | 'manual' } = {},
+  extra: { projectAssociationMode?: 'unset' | 'auto' | 'manual' } = {},
 ) {
   const configDir = path.join(tmpDir, '.teamai', 'local-agent');
   await fse.ensureDir(configDir);
@@ -79,7 +79,7 @@ async function setupConfig(
     localAgentId: 'test-agent-id',
     createdAt: '2026-01-01T00:00:00.000Z',
     workspaceBindings: bindings,
-    ...(extra.projectPromptMode ? { projectPromptMode: extra.projectPromptMode } : {}),
+    ...(extra.projectAssociationMode ? { projectAssociationMode: extra.projectAssociationMode } : {}),
   });
 }
 
@@ -340,7 +340,7 @@ describe('local-agent: bindCurrentProject --skip', () => {
 describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
   it('outputs hookSpecificOutput with choices when project is unbound', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'auto' });
+    await setupConfig({}, { projectAssociationMode: 'auto' });
     const projectDir = path.join(tmpDir, 'unbound-project');
     await fse.ensureDir(projectDir);
     const { execFileSync } = await import('node:child_process');
@@ -589,7 +589,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
 
   it('emits hint only once per sessionId', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'auto' });
+    await setupConfig({}, { projectAssociationMode: 'auto' });
     const projectDir = path.join(tmpDir, 'dedup-project');
     await fse.ensureDir(projectDir);
     const { execFileSync } = await import('node:child_process');
@@ -636,7 +636,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
 
   it('reminds every unbound workspace in one session when projects exist', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'auto' });
+    await setupConfig({}, { projectAssociationMode: 'auto' });
     const firstDir = path.join(tmpDir, 'remind-a');
     const secondDir = path.join(tmpDir, 'remind-b');
     await fse.ensureDir(firstDir);
@@ -679,7 +679,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
 
   it('does not remind when the account has no projects', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'auto' });
+    await setupConfig({}, { projectAssociationMode: 'auto' });
     const projectDir = path.join(tmpDir, 'no-projects');
     await fse.ensureDir(projectDir);
     execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
@@ -713,7 +713,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
 
   it('session_start does not ask the user to bind manually', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'auto' });
+    await setupConfig({}, { projectAssociationMode: 'auto' });
     const projectDir = path.join(tmpDir, 'session-start-project');
     await fse.ensureDir(projectDir);
     const { execFileSync } = await import('node:child_process');
@@ -770,7 +770,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
       process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
       const sessionId = `${TEST_SESSION_ID}-${tool}`;
       await fse.remove(path.join(os.tmpdir(), `teamai-prompt-mode-${sessionId}`));
-      await setupConfig({}, { projectPromptMode: 'unset' });
+      await setupConfig({}, { projectAssociationMode: 'unset' });
       const projectDir = path.join(tmpDir, `unset-${tool}`);
       await fse.ensureDir(projectDir);
       execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
@@ -794,10 +794,11 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
         await reportAndSyncLocalAgent({ cwd: projectDir, tool, event });
         const first = chunks.join('');
         expect(first).toContain('[ClawPro项目 关联方式]');
-        expect(first).toContain('1. 自动提醒：每个未绑定工作区都提醒绑定项目（有可绑定项目时）');
-        expect(first).toContain('2. 手动关联：之后自己关联项目，不再自动提醒');
-        expect(first).toContain('teamai bind-project --prompt-mode auto');
-        expect(first).toContain('teamai bind-project --prompt-mode manual');
+        expect(first).toContain('1. 主动提醒：每个未绑定工作区都提醒绑定项目（有可绑定项目时）');
+        expect(first).toContain('2. 手动关联：之后自己关联项目，不再主动提醒');
+        expect(first).toContain('teamai bind-project --project-association-mode auto');
+        expect(first).toContain('若输出包含「[ClawPro项目 绑定提示]」');
+        expect(first).toContain('teamai bind-project --project-association-mode manual');
         expect(first).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
         expect(first).toContain('clawpro 项目设置: 查看或修改项目关联提醒方式');
         expect(first).not.toContain('绑定到「alpha」项目');
@@ -837,7 +838,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
     }
     const output = chunks.join('');
     expect(output).toContain('[ClawPro项目 关联方式]');
-    expect(output).toContain('teamai bind-project --prompt-mode manual');
+    expect(output).toContain('teamai bind-project --project-association-mode manual');
     expect(output).not.toContain('绑定到「');
   });
 
@@ -845,7 +846,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
     'does NOT ask for a reminder mode on non-buddy agent %s',
     async (tool) => {
       process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-      await setupConfig({}, { projectPromptMode: 'unset' });
+      await setupConfig({}, { projectAssociationMode: 'unset' });
       const projectDir = path.join(tmpDir, `unset-non-buddy-${tool}`);
       await fse.ensureDir(projectDir);
       execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
@@ -874,7 +875,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
 
   it('does NOT emit a binding hint when the reminder mode is manual', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'manual' });
+    await setupConfig({}, { projectAssociationMode: 'manual' });
     const projectDir = path.join(tmpDir, 'manual-mode');
     await fse.ensureDir(projectDir);
     execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
@@ -902,7 +903,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
 
   it('does NOT ask for a reminder mode when TEAMAI_BIND_PROMPT_ENABLED is off', async () => {
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '0';
-    await setupConfig({}, { projectPromptMode: 'unset' });
+    await setupConfig({}, { projectAssociationMode: 'unset' });
     const projectDir = path.join(tmpDir, 'unset-disabled');
     await fse.ensureDir(projectDir);
     execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
@@ -947,40 +948,106 @@ describe('local-agent: project prompt mode', () => {
     const { bindCurrentProject } = await import('../local-agent.js');
     const { log } = await import('../utils/logger.js');
 
-    const manual = await capture(() => bindCurrentProject({ promptMode: 'manual', cwd: tmpDir }));
+    const manual = await capture(() => bindCurrentProject({ projectAssociationMode: 'manual', cwd: tmpDir }));
     expect(manual).toContain('手动关联命令:');
     expect(manual).toContain('- clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
     expect(manual).toContain('  teamai bind-project');
     expect(manual).toContain('- clawpro 项目设置: 查看或修改项目关联提醒方式');
     expect(manual).toContain('  teamai bind-project --settings');
     const saved = await fse.readJson(path.join(tmpDir, '.teamai', 'local-agent', 'config.json'));
-    expect(saved.projectPromptMode).toBe('manual');
+    expect(saved.projectAssociationMode).toBe('manual');
 
     const shown = await capture(() => bindCurrentProject({ settings: true, cwd: tmpDir }));
     expect(log.info).toHaveBeenCalledWith('Project association reminder: manual.');
     expect(shown).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
     expect(shown).toContain('teamai bind-project --settings');
 
-    await bindCurrentProject({ promptMode: 'auto', settings: true, cwd: tmpDir });
+    await bindCurrentProject({ projectAssociationMode: 'auto', settings: true, cwd: tmpDir });
     expect(log.info).toHaveBeenCalledWith('Project association reminder: auto.');
     const updated = await fse.readJson(path.join(tmpDir, '.teamai', 'local-agent', 'config.json'));
-    expect(updated.projectPromptMode).toBe('auto');
+    expect(updated.projectAssociationMode).toBe('auto');
+  });
+
+  it('offers the current workspace projects in the same turn after auto', async () => {
+    process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
+    const projectDir = path.join(tmpDir, 'auto-offer');
+    await fse.ensureDir(projectDir);
+    execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+    await setupConfig();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/api/projects/mine')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          projects: [
+            { id: 100, name: 'alpha' },
+            { id: 200, name: 'beta' },
+          ],
+        }));
+      }
+      return new Response(JSON.stringify({ ok: true }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { bindCurrentProject, reportAndSyncLocalAgent } = await import('../local-agent.js');
+    const output = await capture(() => bindCurrentProject({ projectAssociationMode: 'auto', cwd: projectDir }));
+    expect(output).toContain('[ClawPro项目 绑定提示]');
+    expect(output).toContain('绑定到「alpha」项目');
+    expect(output).toContain('绑定到「beta」项目');
+    expect(output).toContain('不绑定，以后也不再提示');
+    expect(output).toContain('teamai bind-project --project-id 100');
+    expect(output).toContain('teamai bind-project --project-id 200');
+    expect(output).toContain('teamai bind-project --skip');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(true);
+
+    const event = {
+      type: 'prompt_submit' as const,
+      timestamp: new Date().toISOString(),
+      sessionId: TEST_SESSION_ID,
+      tool: 'codebuddy' as const,
+    };
+    const again = await capture(() => reportAndSyncLocalAgent({ cwd: projectDir, tool: 'codebuddy', event }));
+    expect(again).toContain('[ClawPro项目 绑定提示]');
+    expect(again).toContain('绑定到「alpha」项目');
+    const third = await capture(() => reportAndSyncLocalAgent({ cwd: projectDir, tool: 'codebuddy', event }));
+    expect(third).not.toContain('hookSpecificOutput');
+  });
+
+  it('does not offer projects after auto when the account has none or the workspace is already bound', async () => {
+    const projectDir = path.join(tmpDir, 'auto-no-offer');
+    await fse.ensureDir(projectDir);
+    execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+    await setupConfig();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, projects: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { bindCurrentProject } = await import('../local-agent.js');
+
+    const empty = await capture(() => bindCurrentProject({ projectAssociationMode: 'auto', cwd: projectDir }));
+    expect(empty).not.toContain('[ClawPro项目 绑定提示]');
+
+    const root = fs.realpathSync(projectDir);
+    await setupConfig({
+      [root]: { projectId: 7, projectName: 'kept', boundAt: '2026-01-01T00:00:00.000Z' },
+    });
+    fetchMock.mockClear();
+    const bound = await capture(() => bindCurrentProject({ projectAssociationMode: 'auto', cwd: projectDir }));
+    expect(bound).not.toContain('[ClawPro项目 绑定提示]');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(false);
   });
 
   it('rejects an unknown prompt mode', async () => {
     await setupConfig();
     const { bindCurrentProject } = await import('../local-agent.js');
-    await expect(bindCurrentProject({ promptMode: 'sometimes', cwd: tmpDir })).rejects.toThrow('Invalid --prompt-mode');
+    await expect(bindCurrentProject({ projectAssociationMode: 'sometimes', cwd: tmpDir })).rejects.toThrow('Invalid --project-association-mode');
   });
 
   it('records unset on a first install and keeps the choice across a forced re-init', async () => {
     const { initLocalAgentHttp, loadLocalAgentConfig } = await import('../local-agent.js');
     await initLocalAgentHttp({ endpoint: 'https://new.example.com/api', filterAgents: [] });
-    expect((await loadLocalAgentConfig())?.projectPromptMode).toBe('unset');
+    expect((await loadLocalAgentConfig())?.projectAssociationMode).toBe('unset');
 
     const configPath = path.join(tmpDir, '.teamai', 'local-agent', 'config.json');
     const current = await fse.readJson(configPath);
-    current.projectPromptMode = 'manual';
+    current.projectAssociationMode = 'manual';
     current.workspaceBindings = {
       '/tmp/kept': { projectId: 7, projectName: 'kept', boundAt: '2026-01-01T00:00:00.000Z' },
     };
@@ -989,7 +1056,7 @@ describe('local-agent: project prompt mode', () => {
     await initLocalAgentHttp({ endpoint: 'https://other.example.com/api', force: true, filterAgents: [] });
     const next = await loadLocalAgentConfig();
     expect(next?.endpoint).toBe('https://other.example.com/api');
-    expect(next?.projectPromptMode).toBe('manual');
+    expect(next?.projectAssociationMode).toBe('manual');
     expect(next?.workspaceBindings['/tmp/kept']?.projectId).toBe(7);
   });
 
@@ -1001,7 +1068,7 @@ describe('local-agent: project prompt mode', () => {
 
     await initLocalAgentHttp({ endpoint: 'https://other.example.com/api', force: true, filterAgents: [] });
     const next = await loadLocalAgentConfig();
-    expect(next?.projectPromptMode).toBe('unset');
+    expect(next?.projectAssociationMode).toBe('unset');
     expect(next?.workspaceBindings['/tmp/kept']?.projectId).toBe(7);
   });
 });
@@ -1799,7 +1866,7 @@ describe('local-agent: CloudStudio sandbox suppression', () => {
   it('still emits binding hint (stdout) but skips HTTP report inside sandbox', async () => {
     process.env.X_IDE_IS_CLOUDSTUDIO = 'TRUE';
     process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
-    await setupConfig({}, { projectPromptMode: 'auto' });
+    await setupConfig({}, { projectAssociationMode: 'auto' });
     const projectDir = path.join(tmpDir, 'sandbox-unbound-project');
     await fse.ensureDir(projectDir);
     const { execFileSync } = await import('node:child_process');
