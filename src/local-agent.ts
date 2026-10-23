@@ -188,7 +188,8 @@ export interface LocalAgentConfig {
   userGroupName?: string;
   /**
    * Device-wide choice for ClawPro workspace binding reminders.
-   * Missing on older configs means `auto`. `unset` asks once after a fresh install.
+   * Only `auto` or `manual` is a choice. A missing field means the device has
+   * not chosen yet (`unset`): ask once. `auto` then reminds every unbound workspace.
    */
   projectPromptMode?: 'unset' | 'auto' | 'manual';
   workspaceBindings: Record<string, WorkspaceBinding>;
