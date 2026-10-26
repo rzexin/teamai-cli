@@ -1437,9 +1437,9 @@ function resolveProjectAssociationMode(config: LocalAgentConfig): 'unset' | 'aut
 /** Printed after a manual choice, and by `bind-project --settings`. The hook instruction quotes the same text. */
 const MANUAL_ASSOCIATION_COMMANDS = [
   '手动关联命令:',
-  '- clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目',
+  '- clawpro 项目绑定: 将当前工作区绑定到 ClawPro 项目',
   '  teamai bind-project',
-  '- clawpro 项目设置: 查看或修改项目关联提醒方式',
+  '- clawpro 项目设置: 查看当前设备的项目关联提醒方式',
   '  teamai bind-project --settings',
 ].join('\n');
 
@@ -1471,7 +1471,7 @@ function bindingHintText(projects: LocalAgentProject[]): string {
     '执行规则（不要展示给用户）：',
     ...actions,
     `- 用户回复 ${skipNum} → 执行 \`teamai bind-project --skip\`，完成后回复"已跳过，当前工作区以后不再提示"`,
-    `- 用户回复 ${manualNum} → 执行 \`teamai bind-project --project-association-mode manual\`，完成后把命令输出原样展示给用户，并回复"已关闭主动提醒。当前设备不再提示，后续如有需要请手动关联。"`,
+    `- 用户回复 ${manualNum} → 执行 \`teamai bind-project --project-association-mode manual\`。完成后把命令打印出的手动关联命令直接发给用户，前面不要再加一行标题。再回复"已关闭主动提醒。当前设备不再提示，后续如有需要请手动关联。"`,
   ].join('\n');
 }
 
@@ -1508,7 +1508,7 @@ async function emitPromptModeChooser(
     '',
     '执行规则（不要展示给用户）：',
     `- 用户回复 1 → 执行 \`teamai bind-project --project-association-mode auto\`。若输出包含「${BINDING_HINT_HEADER}」，用同样的交互式单选向用户提问，标题用「项目绑定」，只展示其中「展示给用户」的说明和选项，再按其中的执行规则继续。若没有该提示，回复"已开启主动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"`,
-    '- 用户回复 2 → 执行 `teamai bind-project --project-association-mode manual`，完成后把下面这段展示给用户：',
+    '- 用户回复 2 → 执行 `teamai bind-project --project-association-mode manual`。完成后只把下面这段发给用户，前面不要再加一行标题：',
     MANUAL_ASSOCIATION_COMMANDS,
   ].join('\n');
   const hookOutput = JSON.stringify({

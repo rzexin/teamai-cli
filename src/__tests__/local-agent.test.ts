@@ -808,8 +808,8 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
         expect(first).not.toContain('必须');
         expect(first).not.toContain('不得');
         expect(first).toContain('teamai bind-project --project-association-mode manual');
-        expect(first).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
-        expect(first).toContain('clawpro 项目设置: 查看或修改项目关联提醒方式');
+        expect(first).toContain('clawpro 项目绑定: 将当前工作区绑定到 ClawPro 项目');
+        expect(first).toContain('clawpro 项目设置: 查看当前设备的项目关联提醒方式');
         expect(first).not.toContain('绑定到「alpha」项目');
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(false);
 
@@ -959,16 +959,16 @@ describe('local-agent: project prompt mode', () => {
 
     const manual = await capture(() => bindCurrentProject({ projectAssociationMode: 'manual', cwd: tmpDir }));
     expect(manual).toContain('手动关联命令:');
-    expect(manual).toContain('- clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
+    expect(manual).toContain('- clawpro 项目绑定: 将当前工作区绑定到 ClawPro 项目');
     expect(manual).toContain('  teamai bind-project');
-    expect(manual).toContain('- clawpro 项目设置: 查看或修改项目关联提醒方式');
+    expect(manual).toContain('- clawpro 项目设置: 查看当前设备的项目关联提醒方式');
     expect(manual).toContain('  teamai bind-project --settings');
     const saved = await fse.readJson(path.join(tmpDir, '.teamai', 'local-agent', 'config.json'));
     expect(saved.projectAssociationMode).toBe('manual');
 
     const shown = await capture(() => bindCurrentProject({ settings: true, cwd: tmpDir }));
     expect(log.info).toHaveBeenCalledWith('Project association reminder: manual.');
-    expect(shown).toContain('clawpro 项目绑定: 将当前工作空间绑定到 ClawPro 项目');
+    expect(shown).toContain('clawpro 项目绑定: 将当前工作区绑定到 ClawPro 项目');
     expect(shown).toContain('teamai bind-project --settings');
 
     await bindCurrentProject({ projectAssociationMode: 'auto', settings: true, cwd: tmpDir });
