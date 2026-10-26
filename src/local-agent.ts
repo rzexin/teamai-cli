@@ -1449,6 +1449,7 @@ const BINDING_HINT_HEADER = '[ClawPro项目 绑定提示]';
 /** Agent-facing project choices. Shared by the hook reminder and `--project-association-mode auto`. */
 function bindingHintText(projects: LocalAgentProject[]): string {
   const skipNum = projects.length + 1;
+  const manualNum = projects.length + 2;
   const choices = projects.map((p, i) => `${i + 1}. 绑定到「${p.name}」项目`);
   const actions = projects.map((p, i) => `- 用户回复 ${i + 1} → 执行 \`teamai bind-project --project-id ${p.id}\`，完成后回复"绑定完成，请开新会话生效"`);
   return [
@@ -1460,14 +1461,16 @@ function bindingHintText(projects: LocalAgentProject[]): string {
     '',
     '展示给用户：',
     '标题：项目绑定',
-    '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。',
+    '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。若不想每个新工作区都自动提醒，可以关闭主动提醒，之后改为手动关联。',
     '选项：',
     ...choices,
     `${skipNum}. 不绑定，以后也不再提示`,
+    `${manualNum}. 关闭主动提醒，之后改为手动关联`,
     '',
     '执行规则（不要展示给用户）：',
     ...actions,
     `- 用户回复 ${skipNum} → 执行 \`teamai bind-project --skip\`，完成后回复"已跳过，以后不再提示"`,
+    `- 用户回复 ${manualNum} → 执行 \`teamai bind-project --project-association-mode manual\`，完成后把命令输出原样展示给用户，并回复"已关闭主动提醒，之后改为手动关联。"`,
   ].join('\n');
 }
 

@@ -394,9 +394,12 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
     expect(ctx).toContain('绑定到「alpha」项目');
     expect(ctx).toContain('绑定到「beta」项目');
     expect(ctx).toContain('不绑定，以后也不再提示');
+    expect(ctx).toContain('关闭主动提醒，之后改为手动关联');
+    expect(ctx).toContain('若不想每个新工作区都自动提醒');
     expect(ctx).toContain('teamai bind-project --project-id 100');
     expect(ctx).toContain('teamai bind-project --project-id 200');
     expect(ctx).toContain('teamai bind-project --skip');
+    expect(ctx).toContain('teamai bind-project --project-association-mode manual');
   });
 
   // ClawPro project binding only backs CodeBuddy/WorkBuddy, so every other host
@@ -1000,9 +1003,11 @@ describe('local-agent: project prompt mode', () => {
     expect(output).toContain('绑定到「alpha」项目');
     expect(output).toContain('绑定到「beta」项目');
     expect(output).toContain('不绑定，以后也不再提示');
+    expect(output).toContain('关闭主动提醒，之后改为手动关联');
     expect(output).toContain('teamai bind-project --project-id 100');
     expect(output).toContain('teamai bind-project --project-id 200');
     expect(output).toContain('teamai bind-project --skip');
+    expect(output).toContain('teamai bind-project --project-association-mode manual');
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/projects/mine'))).toBe(true);
 
     const event = {
