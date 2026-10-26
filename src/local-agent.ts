@@ -1461,16 +1461,16 @@ function bindingHintText(projects: LocalAgentProject[]): string {
     '',
     '展示给用户：',
     '标题：项目绑定',
-    '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。若不想每个新工作区都自动提醒，可以关闭主动提醒，之后改为手动关联。',
+    '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。若不想每个新工作区都自动提醒，可以不绑定，当前设备不再提示，后续如有需要我会手动关联。',
     '选项：',
     ...choices,
     `${skipNum}. 不绑定，以后也不再提示`,
-    `${manualNum}. 关闭主动提醒，之后改为手动关联`,
+    `${manualNum}. 不绑定，当前设备不再提示，后续如有需要我会手动关联`,
     '',
     '执行规则（不要展示给用户）：',
     ...actions,
     `- 用户回复 ${skipNum} → 执行 \`teamai bind-project --skip\`，完成后回复"已跳过，以后不再提示"`,
-    `- 用户回复 ${manualNum} → 执行 \`teamai bind-project --project-association-mode manual\`，完成后把命令输出原样展示给用户，并回复"已关闭主动提醒，之后改为手动关联。"`,
+    `- 用户回复 ${manualNum} → 执行 \`teamai bind-project --project-association-mode manual\`，完成后把命令输出原样展示给用户，并回复"已不绑定，当前设备不再提示，后续如有需要我会手动关联。"`,
   ].join('\n');
 }
 
