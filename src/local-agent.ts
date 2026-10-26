@@ -1446,27 +1446,55 @@ const MANUAL_ASSOCIATION_COMMANDS = [
 /** Marker the agent looks for in `bind-project --project-association-mode auto` output. The hook instruction quotes it. */
 const BINDING_HINT_HEADER = '[ClawPro项目 绑定提示]';
 
+/**
+ * AskUserQuestion accepts at most 4 options and drops the rest. A longer list
+ * is sent as numbered text so every choice stays visible.
+ */
+const QUESTION_CARD_OPTION_LIMIT = 4;
+
 /** Agent-facing project choices. Shared by the hook reminder and `--project-association-mode auto`. */
 function bindingHintText(projects: LocalAgentProject[]): string {
   const skipNum = projects.length + 1;
   const manualNum = projects.length + 2;
-  const choices = projects.map((p, i) => `${i + 1}. 绑定到「${p.name}」项目`);
+  const choices = [
+    ...projects.map((p, i) => `${i + 1}. 绑定到「${p.name}」项目`),
+    `${skipNum}. 不绑定，当前工作区以后不再提示`,
+    `${manualNum}. 不绑定，当前设备不再提示，后续如有需要我会手动关联`,
+  ];
   const actions = projects.map((p, i) => `- 用户回复 ${i + 1} → 执行 \`teamai bind-project --project-id ${p.id}\`，完成后回复"绑定完成，请开新会话生效"`);
+  const useCard = choices.length <= QUESTION_CARD_OPTION_LIMIT;
+  const presentation = useCard
+    ? [
+        '请用交互式单选向用户提问，和「项目关联方式」用同一种选择卡片。',
+        '标题用「项目绑定」。卡片里只放「展示给用户」的说明和选项。说明只使用下面那一句，不要把选项写进说明。',
+        '每一个编号选项都要单独列出，文字保持不变，不要省略、不要合并。',
+        '不要把本段说明、方括号标记或执行规则展示出来。用户选定后，按执行规则运行对应命令。',
+      ]
+    : [
+        `选项一共 ${choices.length} 个，超过交互式单选卡片的 ${QUESTION_CARD_OPTION_LIMIT} 个上限，多出来的选项会被丢掉。不要使用选择卡片。`,
+        '把下面「展示给用户」整段原样发给用户，包括全部编号选项和「请回复数字选择」。',
+        '每一个编号选项都要单独列出，文字保持不变，不要省略、不要合并。',
+        '不要把本段说明、方括号标记或执行规则展示出来。用户回复数字后，按执行规则运行对应命令。',
+      ];
+  const shown = useCard
+    ? [
+        '标题：项目绑定',
+        '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。',
+        '选项：',
+        ...choices,
+      ]
+    : [
+        '当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。请回复数字选择：',
+        '',
+        ...choices,
+      ];
   return [
     BINDING_HINT_HEADER,
     '下面是给助手的说明，不要展示给用户。',
-    '请用交互式单选向用户提问，和「项目关联方式」用同一种选择卡片。',
-    '标题用「项目绑定」。卡片里只放「展示给用户」的说明和选项。说明只使用下面那一句，不要把选项写进说明。',
-    '每一个编号选项都要单独列出，文字保持不变，不要省略、不要合并。',
-    '不要把本段说明、方括号标记或执行规则展示出来。用户选定后，按执行规则运行对应命令。',
+    ...presentation,
     '',
     '展示给用户：',
-    '标题：项目绑定',
-    '说明：当前工作区还没绑定 ClawPro 项目。绑定后可以同步团队的 skills 和 rules。',
-    '选项：',
-    ...choices,
-    `${skipNum}. 不绑定，当前工作区以后不再提示`,
-    `${manualNum}. 不绑定，当前设备不再提示，后续如有需要我会手动关联`,
+    ...shown,
     '',
     '执行规则（不要展示给用户）：',
     ...actions,
@@ -1507,7 +1535,7 @@ async function emitPromptModeChooser(
     '2. 手动关联：之后自己关联项目，不再主动提醒',
     '',
     '执行规则（不要展示给用户）：',
-    `- 用户回复 1 → 执行 \`teamai bind-project --project-association-mode auto\`。若输出包含「${BINDING_HINT_HEADER}」，用同样的交互式单选向用户提问，标题用「项目绑定」，只展示其中「展示给用户」的说明和选项，再按其中的执行规则继续。若没有该提示，回复"已开启主动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"`,
+    `- 用户回复 1 → 执行 \`teamai bind-project --project-association-mode auto\`。若输出包含「${BINDING_HINT_HEADER}」，按该提示自己的展示方式向用户提问：提示要求选择卡片时用卡片，提示要求文本列出时把「展示给用户」整段原样发出并让用户回复数字。不要改写或省略选项，再按其中的执行规则继续。若没有该提示，回复"已开启主动提醒。之后每个未绑定工作区，只要有可绑定项目，都会提醒绑定。"`,
     '- 用户回复 2 → 执行 `teamai bind-project --project-association-mode manual`。完成后只把下面这段发给用户，前面不要再加一行标题：',
     MANUAL_ASSOCIATION_COMMANDS,
   ].join('\n');

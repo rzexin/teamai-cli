@@ -395,10 +395,65 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
     expect(ctx).toContain('绑定到「beta」项目');
     expect(ctx).toContain('不绑定，当前工作区以后不再提示');
     expect(ctx).toContain('不绑定，当前设备不再提示，后续如有需要我会手动关联');
+    expect(ctx).not.toContain('请回复数字选择');
     expect(ctx).not.toContain('若不想每个新工作区都自动提醒');
     expect(ctx).toContain('teamai bind-project --project-id 100');
     expect(ctx).toContain('teamai bind-project --project-id 200');
     expect(ctx).toContain('teamai bind-project --skip');
+    expect(ctx).toContain('teamai bind-project --project-association-mode manual');
+  });
+
+  it('lists every choice as numbered text when the card cannot hold them', async () => {
+    process.env.TEAMAI_BIND_PROMPT_ENABLED = '1';
+    await setupConfig({}, { projectAssociationMode: 'auto' });
+    const projectDir = path.join(tmpDir, 'overflow-project');
+    await fse.ensureDir(projectDir);
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('git', ['init'], { cwd: projectDir, stdio: 'ignore' });
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/projects/mine')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          projects: [
+            { id: 29, name: 'alpha' },
+            { id: 30, name: 'beta' },
+            { id: 31, name: 'gamma' },
+          ],
+        }));
+      }
+      return new Response(JSON.stringify({ ok: true }));
+    }));
+
+    const stdoutChunks: string[] = [];
+    const origWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Buffer) => {
+      stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      const { reportAndSyncLocalAgent } = await import('../local-agent.js');
+      await reportAndSyncLocalAgent({
+        cwd: projectDir,
+        tool: 'codebuddy',
+        event: { type: 'prompt_submit', timestamp: new Date().toISOString(), sessionId: `${TEST_SESSION_ID}-overflow`, tool: 'codebuddy' },
+      });
+    } finally {
+      process.stdout.write = origWrite;
+    }
+
+    const parsed = JSON.parse(stdoutChunks.join('').trim().split('\n').find((l) => l.includes('hookSpecificOutput'))!);
+    const ctx = parsed.hookSpecificOutput.additionalContext as string;
+    expect(ctx).toContain('不要使用选择卡片');
+    expect(ctx).toContain('请回复数字选择');
+    expect(ctx).not.toContain('请用交互式单选');
+    expect(ctx).toContain('1. 绑定到「alpha」项目');
+    expect(ctx).toContain('2. 绑定到「beta」项目');
+    expect(ctx).toContain('3. 绑定到「gamma」项目');
+    expect(ctx).toContain('4. 不绑定，当前工作区以后不再提示');
+    expect(ctx).toContain('5. 不绑定，当前设备不再提示，后续如有需要我会手动关联');
+    expect(ctx).toContain('teamai bind-project --project-id 31');
     expect(ctx).toContain('teamai bind-project --project-association-mode manual');
   });
 
@@ -804,6 +859,7 @@ describe('local-agent: emitBindingHint via reportAndSyncLocalAgent', () => {
         expect(first).toContain('2. 手动关联：之后自己关联项目，不再主动提醒');
         expect(first).toContain('teamai bind-project --project-association-mode auto');
         expect(first).toContain('若输出包含「[ClawPro项目 绑定提示]」');
+        expect(first).toContain('按该提示自己的展示方式');
         expect(first).toContain('交互式单选');
         expect(first).not.toContain('必须');
         expect(first).not.toContain('不得');
