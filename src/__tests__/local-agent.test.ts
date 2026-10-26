@@ -1503,6 +1503,54 @@ describe('local-agent: full-snapshot workspace reporting', () => {
     expect(wsAEntry?.project_id).toBe(5);
   });
 
+  it('keeps previously opened unbound workspaces in later snapshots', async () => {
+    const earlier = path.join(tmpDir, 'seen-earlier');
+    const current = path.join(tmpDir, 'seen-current');
+    const otherTool = path.join(tmpDir, 'seen-workbuddy');
+    await fse.ensureDir(earlier);
+    await fse.ensureDir(current);
+    await fse.ensureDir(otherTool);
+    await setupConfig({
+      [path.join(tmpDir, 'seen-bound')]: { projectId: 29, projectName: 'bound', boundAt: 'x', ideType: 'codebuddy' },
+    });
+    await fse.ensureDir(path.join(tmpDir, 'seen-bound'));
+
+    const { rememberSeenWorkspace, buildReportPayload, buildSyncPayload, loadLocalAgentConfig } = await import('../local-agent.js');
+    const config = await loadLocalAgentConfig();
+    expect(rememberSeenWorkspace(config!, fse.realpathSync(earlier), 'codebuddy')).toBe(true);
+    expect(rememberSeenWorkspace(config!, fse.realpathSync(earlier), 'codebuddy')).toBe(false);
+    expect(rememberSeenWorkspace(config!, fse.realpathSync(otherTool), 'workbuddy')).toBe(true);
+
+    const report = await buildReportPayload(config!, { tool: 'codebuddy', cwd: current }) as {
+      workspaces?: Array<Record<string, unknown>>;
+    };
+    const sync = await buildSyncPayload(config!, { tool: 'codebuddy', cwd: current }) as {
+      workspaces?: Array<Record<string, unknown>>;
+    };
+    for (const payload of [report, sync]) {
+      const byPath = new Map((payload.workspaces ?? []).map((w) => [w.path, w]));
+      expect(byPath.get(fse.realpathSync(earlier))?.project_id).toBeUndefined();
+      expect(byPath.get(fse.realpathSync(current))?.project_id).toBeUndefined();
+      expect(byPath.get(fse.realpathSync(path.join(tmpDir, 'seen-bound')))?.project_id).toBe(29);
+      expect(byPath.has(fse.realpathSync(otherTool))).toBe(false);
+      expect(payload.workspaces).toHaveLength(3);
+    }
+  });
+
+  it('prunes a seen workspace whose directory is gone', async () => {
+    const live = path.join(tmpDir, 'seen-live');
+    const dead = path.join(tmpDir, 'seen-dead');
+    await fse.ensureDir(live);
+    await setupConfig();
+    const { rememberSeenWorkspace, pruneDeadWorkspaceBindings, loadLocalAgentConfig } = await import('../local-agent.js');
+    const config = await loadLocalAgentConfig();
+    rememberSeenWorkspace(config!, fse.realpathSync(live), 'codebuddy');
+    rememberSeenWorkspace(config!, dead, 'codebuddy');
+
+    expect(await pruneDeadWorkspaceBindings(config!)).toBe(true);
+    expect(Object.keys(config!.seenWorkspaces ?? {})).toEqual([fse.realpathSync(live)]);
+  });
+
   it('does not report HOME as a workspace when the session runs there', async () => {
     await setupConfig();
 
