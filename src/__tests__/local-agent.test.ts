@@ -1051,10 +1051,10 @@ describe('local-agent: project prompt mode', () => {
     await expect(bindCurrentProject({ projectAssociationMode: 'sometimes', cwd: tmpDir })).rejects.toThrow('Invalid --project-association-mode');
   });
 
-  it('records unset on a first install and keeps the choice across a forced re-init', async () => {
+  it('leaves the reminder mode unset on a first install and keeps a choice across a forced re-init', async () => {
     const { initLocalAgentHttp, loadLocalAgentConfig } = await import('../local-agent.js');
     await initLocalAgentHttp({ endpoint: 'https://new.example.com/api', filterAgents: [] });
-    expect((await loadLocalAgentConfig())?.projectAssociationMode).toBe('unset');
+    expect((await loadLocalAgentConfig())?.projectAssociationMode).toBeUndefined();
 
     const configPath = path.join(tmpDir, '.teamai', 'local-agent', 'config.json');
     const current = await fse.readJson(configPath);
@@ -1071,7 +1071,7 @@ describe('local-agent: project prompt mode', () => {
     expect(next?.workspaceBindings['/tmp/kept']?.projectId).toBe(7);
   });
 
-  it('records unset when a forced re-init meets a config that never chose', async () => {
+  it('does not invent a reminder mode when a forced re-init meets a config that never chose', async () => {
     const { initLocalAgentHttp, loadLocalAgentConfig } = await import('../local-agent.js');
     await setupConfig({
       '/tmp/kept': { projectId: 7, projectName: 'kept', boundAt: '2026-01-01T00:00:00.000Z' },
@@ -1079,7 +1079,7 @@ describe('local-agent: project prompt mode', () => {
 
     await initLocalAgentHttp({ endpoint: 'https://other.example.com/api', force: true, filterAgents: [] });
     const next = await loadLocalAgentConfig();
-    expect(next?.projectAssociationMode).toBe('unset');
+    expect(next?.projectAssociationMode).toBeUndefined();
     expect(next?.workspaceBindings['/tmp/kept']?.projectId).toBe(7);
   });
 });

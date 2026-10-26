@@ -702,19 +702,11 @@ export async function loadLocalAgentConfig(options: { dryRun?: boolean } = {}): 
   // A removed source must not reconnect through legacy config or environment fallback.
   if (fileConfig && 'disabled' in fileConfig && fileConfig.disabled === true) return null;
   if (fileConfig && 'endpoint' in fileConfig && fileConfig.endpoint) {
-    const { seenWorkspaces: droppedSeen, ...fileRest } = fileConfig as LocalAgentConfig & { seenWorkspaces?: unknown };
     const config = {
-      ...fileRest,
+      ...fileConfig,
       endpoint: normalizeEndpoint(fileConfig.endpoint),
       workspaceBindings: fileConfig.workspaceBindings ?? {},
     };
-    if (droppedSeen !== undefined && !options.dryRun) {
-      try {
-        await saveLocalAgentConfig(config);
-      } catch (e) {
-        log.debug(`local-agent: failed to drop seenWorkspaces: ${(e as Error).message}`);
-      }
-    }
     // Migrate: clear legacy group-based bindings (groupId without projectId)
     const removedLegacyPaths: string[] = [];
     for (const [wsPath, binding] of Object.entries(config.workspaceBindings)) {
@@ -4528,20 +4520,17 @@ async function syncLocalAgent(context: LocalAgentContext): Promise<boolean> {
     // earlier local, so tool attribution does not depend on the binding-prompt
     // block above keeping a `workspacePath` in scope.
     const currentPath = await resolveWorkspacePath(context.cwd);
-    const tool = context.tool ?? 'workbuddy';
     // Manual mode does not bind a project. Record the opened directory as
     // skipped so later full snapshots still list it, the same way --skip does.
-    let recordedSkip = false;
     if (
       resolveProjectAssociationMode(config) === 'manual'
       && currentPath
       && !config.workspaceBindings[currentPath]
     ) {
       await persistWorkspaceBinding(config, context.cwd, currentPath, 0, '__skipped__');
-      recordedSkip = true;
     }
-    const stamped = stampWorkspaceTool(config, currentPath, tool);
-    if (pruned || recordedSkip || stamped) {
+    const stamped = stampWorkspaceTool(config, currentPath, context.tool ?? 'workbuddy');
+    if (pruned || stamped) {
       await saveLocalAgentConfig(config);
     }
   }
@@ -4817,12 +4806,13 @@ export async function initLocalAgentHttp(options: {
     workspaceBindings: existing?.workspaceBindings ?? {},
     userGroupId: existing?.userGroupId,
     userGroupName: existing?.userGroupName,
-    // A re-init keeps auto/manual. A first install, and an older config that
-    // never recorded a choice, both ask once.
-    projectAssociationMode: existing?.projectAssociationMode === 'auto' || existing?.projectAssociationMode === 'manual'
-      ? existing.projectAssociationMode
-      : 'unset',
   };
+  // A missing field already means unset, so a first install and an older
+  // config keep asking once. Only an explicit auto/manual choice is copied,
+  // otherwise --force would drop it when this object is rebuilt.
+  if (existing?.projectAssociationMode === 'auto' || existing?.projectAssociationMode === 'manual') {
+    config.projectAssociationMode = existing.projectAssociationMode;
+  }
 
   await ensureDir(getLocalAgentHome());
   await saveLocalAgentConfig(config);
