@@ -174,13 +174,6 @@ interface WorkspaceBinding {
   ideType?: string;
 }
 
-/** A workspace opened by a tool, kept so later full snapshots still list it. */
-interface SeenWorkspace {
-  /** Normalized owning tool (via normalizeAgentType). */
-  ideType: string;
-  seenAt: string;
-}
-
 export interface LocalAgentConfig {
   endpoint: string;
   token?: string;
@@ -200,14 +193,6 @@ export interface LocalAgentConfig {
    */
   projectAssociationMode?: 'unset' | 'auto' | 'manual';
   workspaceBindings: Record<string, WorkspaceBinding>;
-  /**
-   * Workspaces this machine has opened, whether or not they are bound to a
-   * project. Report and sync send a full snapshot, so a directory that is only
-   * the current session would otherwise disappear the next time a different
-   * directory is reported. A seen entry is not a binding decision: reminders
-   * still treat the workspace as unbound until `workspaceBindings` records one.
-   */
-  seenWorkspaces?: Record<string, SeenWorkspace>;
   /**
    * Optional per-endpoint path overrides. Maps a logical route name to a custom
    * path so a backend that does not use the default `/api/local-agent/*` layout
@@ -717,11 +702,19 @@ export async function loadLocalAgentConfig(options: { dryRun?: boolean } = {}): 
   // A removed source must not reconnect through legacy config or environment fallback.
   if (fileConfig && 'disabled' in fileConfig && fileConfig.disabled === true) return null;
   if (fileConfig && 'endpoint' in fileConfig && fileConfig.endpoint) {
+    const { seenWorkspaces: droppedSeen, ...fileRest } = fileConfig as LocalAgentConfig & { seenWorkspaces?: unknown };
     const config = {
-      ...fileConfig,
+      ...fileRest,
       endpoint: normalizeEndpoint(fileConfig.endpoint),
       workspaceBindings: fileConfig.workspaceBindings ?? {},
     };
+    if (droppedSeen !== undefined && !options.dryRun) {
+      try {
+        await saveLocalAgentConfig(config);
+      } catch (e) {
+        log.debug(`local-agent: failed to drop seenWorkspaces: ${(e as Error).message}`);
+      }
+    }
     // Migrate: clear legacy group-based bindings (groupId without projectId)
     const removedLegacyPaths: string[] = [];
     for (const [wsPath, binding] of Object.entries(config.workspaceBindings)) {
@@ -1888,65 +1881,37 @@ async function scanModelsFromDisk(tool: string, workspacePath?: string): Promise
  * entries in place. Applies to skipped ('__skipped__', projectId 0)
  * entries too — a deleted directory should not leave a permanent sentinel.
  * A binding on HOME, which earlier releases could record, is pruned as well:
- * HOME is never a workspace (see resolveWorkspacePath). Seen workspaces follow
- * the same rule, so a deleted directory drops out of the next snapshot.
+ * HOME is never a workspace (see resolveWorkspacePath).
  *
- * @param config - Loaded local-agent config; its workspace maps are mutated in place.
- * @returns True if at least one entry was removed.
+ * @param config - Loaded local-agent config; its workspaceBindings map is mutated in place.
+ * @returns True if at least one binding was removed.
  */
 export async function pruneDeadWorkspaceBindings(config: LocalAgentConfig): Promise<boolean> {
   let changed = false;
-  const drop = async (workspacePath: string, remove: () => void): Promise<void> => {
+  for (const workspacePath of Object.keys(config.workspaceBindings)) {
     if (await isUserHomeDir(workspacePath)) {
-      remove();
+      delete config.workspaceBindings[workspacePath];
       changed = true;
-      return;
+      continue;
     }
     try {
       await fs.promises.stat(workspacePath);
     } catch (error) {
       // Only prune when the directory is confirmed gone (ENOENT). Transient
       // failures — permission errors, unreachable network mounts — must NOT
-      // delete a still-valid entry, or the server's full-sync snapshot
-      // would drop that workspace.
+      // delete a still-valid binding, or the server's full-sync snapshot
+      // would drop that workspace's resources.
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        remove();
+        delete config.workspaceBindings[workspacePath];
         changed = true;
       } else {
         log.debug(
-          `local-agent: keeping workspace ${workspacePath} despite stat error: ${(error as Error).message}`,
+          `local-agent: keeping workspace binding ${workspacePath} despite stat error: ${(error as Error).message}`,
         );
       }
     }
-  };
-  for (const workspacePath of Object.keys(config.workspaceBindings)) {
-    await drop(workspacePath, () => { delete config.workspaceBindings[workspacePath]; });
-  }
-  for (const workspacePath of Object.keys(config.seenWorkspaces ?? {})) {
-    await drop(workspacePath, () => { delete config.seenWorkspaces?.[workspacePath]; });
   }
   return changed;
-}
-
-/**
- * Remember a workspace this tool has opened, without recording a project decision.
- *
- * Device-level manual mode never writes a binding, and a workspace can stay
- * unbound on purpose. The directory still has to stay in later snapshots.
- * Returns true when the config changed.
- */
-export function rememberSeenWorkspace(
-  config: LocalAgentConfig,
-  currentPath: string | null | undefined,
-  tool: string,
-): boolean {
-  if (!currentPath) return false;
-  const normalized = normalizeAgentType(tool);
-  const seen = (config.seenWorkspaces ??= {});
-  const existing = seen[currentPath];
-  if (existing?.ideType === normalized) return false;
-  seen[currentPath] = { ideType: normalized, seenAt: existing?.seenAt ?? new Date().toISOString() };
-  return true;
 }
 
 /**
@@ -1973,27 +1938,21 @@ export function stampWorkspaceTool(
 /**
  * Select the workspace paths that belong to the current tool for reporting.
  *
- * A workspace belongs to the current tool when its binding or seen-workspace
- * ideType matches, or — for the not-yet-attributed current cwd — when it is
- * the workspace the hook fired from. An empty/absent ideType on a non-cwd
- * entry is treated as unattributed and excluded (it self-heals once its
- * owning tool reports from it). A seen workspace is included even when it
- * has no project binding.
+ * A binding belongs to the current tool when its stamped ideType matches, or —
+ * for the not-yet-attributed current cwd — when it is the workspace the hook
+ * fired from. An empty/absent ideType on a non-cwd binding is treated as
+ * unattributed and excluded (it self-heals once its owning tool reports from it).
  */
 function selectToolWorkspaces(
   config: LocalAgentConfig,
   currentPath: string | null | undefined,
   currentTool: string,
 ): string[] {
-  const paths = new Set<string>([
-    ...Object.keys(config.workspaceBindings),
-    ...Object.keys(config.seenWorkspaces ?? {}),
-  ]);
+  const paths = new Set<string>(Object.keys(config.workspaceBindings));
   if (currentPath) paths.add(currentPath);
   return Array.from(paths).filter((wsPath) => {
-    const bindingTool = config.workspaceBindings[wsPath]?.ideType || undefined;
-    const seenTool = config.seenWorkspaces?.[wsPath]?.ideType || undefined;
-    const wsTool = bindingTool ?? seenTool ?? (wsPath === currentPath ? currentTool : undefined);
+    const b = config.workspaceBindings[wsPath];
+    const wsTool = (b?.ideType || undefined) ?? (wsPath === currentPath ? currentTool : undefined);
     return wsTool === currentTool;
   });
 }
@@ -4570,9 +4529,19 @@ async function syncLocalAgent(context: LocalAgentContext): Promise<boolean> {
     // block above keeping a `workspacePath` in scope.
     const currentPath = await resolveWorkspacePath(context.cwd);
     const tool = context.tool ?? 'workbuddy';
+    // Manual mode does not bind a project. Record the opened directory as
+    // skipped so later full snapshots still list it, the same way --skip does.
+    let recordedSkip = false;
+    if (
+      resolveProjectAssociationMode(config) === 'manual'
+      && currentPath
+      && !config.workspaceBindings[currentPath]
+    ) {
+      await persistWorkspaceBinding(config, context.cwd, currentPath, 0, '__skipped__');
+      recordedSkip = true;
+    }
     const stamped = stampWorkspaceTool(config, currentPath, tool);
-    const remembered = rememberSeenWorkspace(config, currentPath, tool);
-    if (pruned || stamped || remembered) {
+    if (pruned || recordedSkip || stamped) {
       await saveLocalAgentConfig(config);
     }
   }

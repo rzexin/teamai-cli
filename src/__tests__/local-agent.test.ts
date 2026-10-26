@@ -1503,52 +1503,36 @@ describe('local-agent: full-snapshot workspace reporting', () => {
     expect(wsAEntry?.project_id).toBe(5);
   });
 
-  it('keeps previously opened unbound workspaces in later snapshots', async () => {
-    const earlier = path.join(tmpDir, 'seen-earlier');
-    const current = path.join(tmpDir, 'seen-current');
-    const otherTool = path.join(tmpDir, 'seen-workbuddy');
+  it('records a manually associated workspace as skipped so later snapshots keep it', async () => {
+    await setupConfig({}, { projectAssociationMode: 'manual' });
+    const earlier = path.join(tmpDir, 'manual-earlier');
+    const current = path.join(tmpDir, 'manual-current');
     await fse.ensureDir(earlier);
     await fse.ensureDir(current);
-    await fse.ensureDir(otherTool);
-    await setupConfig({
-      [path.join(tmpDir, 'seen-bound')]: { projectId: 29, projectName: 'bound', boundAt: 'x', ideType: 'codebuddy' },
-    });
-    await fse.ensureDir(path.join(tmpDir, 'seen-bound'));
+    const reports: Array<{ workspaces?: Array<Record<string, unknown>> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes('/report') && typeof init?.body === 'string') {
+        reports.push(JSON.parse(init.body));
+      }
+      return new Response(JSON.stringify({ ok: true, cmds: [] }));
+    }));
 
-    const { rememberSeenWorkspace, buildReportPayload, buildSyncPayload, loadLocalAgentConfig } = await import('../local-agent.js');
+    const { reportAndSyncLocalAgent, loadLocalAgentConfig } = await import('../local-agent.js');
+    const event = { type: 'session_start' as const, timestamp: new Date().toISOString(), sessionId: TEST_SESSION_ID, tool: 'codebuddy' };
+    await reportAndSyncLocalAgent({ cwd: earlier, tool: 'codebuddy', event });
+    await reportAndSyncLocalAgent({ cwd: current, tool: 'codebuddy', event });
+
     const config = await loadLocalAgentConfig();
-    expect(rememberSeenWorkspace(config!, fse.realpathSync(earlier), 'codebuddy')).toBe(true);
-    expect(rememberSeenWorkspace(config!, fse.realpathSync(earlier), 'codebuddy')).toBe(false);
-    expect(rememberSeenWorkspace(config!, fse.realpathSync(otherTool), 'workbuddy')).toBe(true);
+    const earlierReal = fse.realpathSync(earlier);
+    const currentReal = fse.realpathSync(current);
+    expect(config!.workspaceBindings[earlierReal]).toMatchObject({ projectId: 0, projectName: '__skipped__', ideType: 'codebuddy' });
+    expect(config!.workspaceBindings[currentReal]).toMatchObject({ projectId: 0, projectName: '__skipped__', ideType: 'codebuddy' });
+    expect(config).not.toHaveProperty('seenWorkspaces');
 
-    const report = await buildReportPayload(config!, { tool: 'codebuddy', cwd: current }) as {
-      workspaces?: Array<Record<string, unknown>>;
-    };
-    const sync = await buildSyncPayload(config!, { tool: 'codebuddy', cwd: current }) as {
-      workspaces?: Array<Record<string, unknown>>;
-    };
-    for (const payload of [report, sync]) {
-      const byPath = new Map((payload.workspaces ?? []).map((w) => [w.path, w]));
-      expect(byPath.get(fse.realpathSync(earlier))?.project_id).toBeUndefined();
-      expect(byPath.get(fse.realpathSync(current))?.project_id).toBeUndefined();
-      expect(byPath.get(fse.realpathSync(path.join(tmpDir, 'seen-bound')))?.project_id).toBe(29);
-      expect(byPath.has(fse.realpathSync(otherTool))).toBe(false);
-      expect(payload.workspaces).toHaveLength(3);
-    }
-  });
-
-  it('prunes a seen workspace whose directory is gone', async () => {
-    const live = path.join(tmpDir, 'seen-live');
-    const dead = path.join(tmpDir, 'seen-dead');
-    await fse.ensureDir(live);
-    await setupConfig();
-    const { rememberSeenWorkspace, pruneDeadWorkspaceBindings, loadLocalAgentConfig } = await import('../local-agent.js');
-    const config = await loadLocalAgentConfig();
-    rememberSeenWorkspace(config!, fse.realpathSync(live), 'codebuddy');
-    rememberSeenWorkspace(config!, dead, 'codebuddy');
-
-    expect(await pruneDeadWorkspaceBindings(config!)).toBe(true);
-    expect(Object.keys(config!.seenWorkspaces ?? {})).toEqual([fse.realpathSync(live)]);
+    const last = reports.at(-1);
+    const paths = (last?.workspaces ?? []).map((w) => w.path);
+    expect(paths).toEqual(expect.arrayContaining([earlierReal, currentReal]));
+    expect(last?.workspaces?.every((w) => w.project_id === 0)).toBe(true);
   });
 
   it('does not report HOME as a workspace when the session runs there', async () => {
